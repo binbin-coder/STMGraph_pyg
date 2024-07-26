@@ -6,7 +6,9 @@
 
 ## Software dependencies
 scanpy
+
 pytorch
+
 pyG
 
 ## Tutorials
