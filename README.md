@@ -10,6 +10,9 @@ scanpy
 pytorch
 
 pyG
+## Installation
+conda env create -f environment_pyg.yaml  
+pip install STMGraph_pyG
 
 ## Tutorials
 see https://github.com/binbin-coder/STMGraph
