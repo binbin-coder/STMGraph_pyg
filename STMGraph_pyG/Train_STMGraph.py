@@ -20,7 +20,7 @@ def sce_loss(x, y, alpha=1.0):
     return loss
 
 def train_STMGraph(adata, hidden_dims=[512, 30], n_epochs=1000, lr=0.001,mask_ratio=0.5,noise=0.05,alpha=1.0,key_added='STMGraph',
-                gradient_clipping=5.,  weight_decay=0.0001, verbose=True, 
+                gradient_clipping=5.,  weight_decay=0.0001, verbose=True, delayed_ema_epoch=10, momentum=0.99,
                 random_seed=52, save_loss=False, save_reconstrction=False, 
                 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
     """\
@@ -80,7 +80,7 @@ def train_STMGraph(adata, hidden_dims=[512, 30], n_epochs=1000, lr=0.001,mask_ra
 
     data = Transfer_pytorch_Data(adata_Vars)
 
-    model = STMGraph(hidden_dims = [data.x.shape[1]] + hidden_dims).to(device)
+    model = STMGraph(hidden_dims = [data.x.shape[1]] + hidden_dims, delayed_ema_epoch=delayed_ema_epoch, momentum=momentum).to(device)
     data = data.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay, eps=1e-4)
     # optimizer = torch.optim.Adam(list(model.parameters()), lr=lr, weight_decay=weight_decay)
@@ -90,9 +90,11 @@ def train_STMGraph(adata, hidden_dims=[512, 30], n_epochs=1000, lr=0.001,mask_ra
         model.train()
         optimizer.zero_grad()
         # z, out = model(data.x, data.edge_index)
-        z, out_1, out_2, mask_nodes, keep_nodes = model(data.x, data.edge_index, mask_rate=mask_ratio, replace_rate=noise)
+        z, z_ema, out_1, out_2, mask_nodes, keep_nodes, ATT = model(epoch, data.x, data.edge_index, mask_rate=mask_ratio, replace_rate=noise)
         # loss = F.mse_loss(data.x, out_1)
-        loss = sce_loss(data.x[mask_nodes],out_1[mask_nodes],alpha=alpha) + sce_loss(data.x[keep_nodes],out_2[keep_nodes],alpha=alpha)
+        loss1 = sce_loss(data.x[mask_nodes],out_1[mask_nodes],alpha=alpha) + sce_loss(data.x[mask_nodes],out_2[mask_nodes],alpha=alpha)
+        loss2 = F.mse_loss(z[keep_nodes], z_ema[keep_nodes])
+        loss = loss1 + loss2
         # loss = sce_loss(data.x,out_1,alpha=alpha) + sce_loss(data.x,out_2,alpha=alpha)
         # F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         # loss_list.append(loss)
@@ -103,7 +105,7 @@ def train_STMGraph(adata, hidden_dims=[512, 30], n_epochs=1000, lr=0.001,mask_ra
         print(loss.item())
     
     model.eval()
-    z, out_1, out_2, mask_nodes, keep_nodes = model(data.x, data.edge_index, mask_rate=0.0, replace_rate=0.0)
+    z, z_ema, out_1, out_2, mask_nodes, keep_nodes, ATT = model(epoch, data.x, data.edge_index, mask_rate=0.0, replace_rate=0.0)
     STMGraph_rep = z.to('cpu').detach().numpy()
     adata.obsm[key_added] = STMGraph_rep
     torch.cuda.empty_cache()
@@ -124,7 +126,9 @@ def fix_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
     cudnn.deterministic = True
     cudnn.benchmark = False
-    
-    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  
+    # torch.use_deterministic_algorithms(True)  # 强制报错非确定性操作
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
